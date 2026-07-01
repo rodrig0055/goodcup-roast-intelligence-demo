@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
 import re
+import ssl
 from urllib.error import URLError
 from urllib.parse import quote_plus, urlencode
 from urllib.request import Request, urlopen
@@ -56,12 +57,27 @@ class Paper:
 # --------------------------------------------------------------------------- #
 # The single network touchpoint (monkeypatched in tests)
 # --------------------------------------------------------------------------- #
+def _ssl_context() -> ssl.SSLContext | None:
+    """Verified TLS context using certifi's CA bundle when available.
+
+    macOS python.org builds don't trust the system keychain, so a default
+    context can fail cert verification. We never disable verification; we point
+    it at a real CA bundle, and fall back to the stdlib default otherwise.
+    """
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
+
+
 def _http_get(url: str, timeout: float = 6.0) -> bytes:
     req = Request(url, headers={"User-Agent": f"GoodCup/0.1 (mailto:{CONTACT_EMAIL})"})
     try:
-        with urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted, fixed hosts)
+        with urlopen(req, timeout=timeout, context=_ssl_context()) as resp:  # noqa: S310 (trusted, fixed hosts)
             return resp.read()
-    except (URLError, TimeoutError, OSError) as exc:  # offline / DNS / timeout / reset
+    except (URLError, TimeoutError, OSError) as exc:  # offline / DNS / timeout / reset / TLS
         raise LiteratureUnavailable(str(exc)) from exc
 
 

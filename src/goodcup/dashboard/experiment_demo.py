@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from statistics import mean, pstdev
 
 
@@ -48,3 +49,25 @@ def evaluate_blind_results(scores: dict[str, list[float]]) -> dict:
         "ranking": summaries,
         "decision": decision,
     }
+
+
+def cups_needed(delta: float, spread: float, power: float = 0.80, alpha: float = 0.05) -> int:
+    """Replicated cups **per profile** needed to detect a score difference.
+
+    A two-sided, two-sample power calculation using the normal approximation:
+    ``n = 2 * ((z_alpha/2 + z_beta) * sd / delta) ** 2`` per group. This tells a
+    lab whether a planned blind comparison is powered to see the difference it
+    cares about, so an under-powered trial is not mistaken for "no effect".
+
+    ``delta`` is the smallest score difference worth detecting; ``spread`` is the
+    within-profile SD (use the observed cup spread). Returns cups per profile
+    (>= 2). Raises on non-positive inputs.
+    """
+    if delta <= 0 or spread <= 0:
+        raise ValueError("delta and spread must be positive")
+    # inverse-normal via the rational approximation is overkill; use fixed z for
+    # the common (0.05, 0.80) case and a small table otherwise.
+    z_alpha = {0.05: 1.959964, 0.10: 1.644854, 0.01: 2.575829}.get(round(alpha, 2), 1.959964)
+    z_beta = {0.80: 0.841621, 0.90: 1.281552, 0.95: 1.644854}.get(round(power, 2), 0.841621)
+    n = 2 * ((z_alpha + z_beta) * spread / delta) ** 2
+    return max(2, math.ceil(n))

@@ -200,6 +200,75 @@ def _detect_confounders(df) -> dict:
     return out
 
 
+def partial_association(
+    df,
+    metric: str,
+    score_col: str = "mean_total_score",
+    covariates: list[str] | None = None,
+) -> dict:
+    """Association between ``metric`` and ``score_col`` *net of* categorical
+    confounders, via partial correlation (residualisation).
+
+    We regress both the metric and the score on one-hot encodings of the
+    covariates (machine / process / origin by default), then correlate the
+    residuals. The result answers "does this metric still track score once the
+    obvious confounders are held constant?" -- reported with a Fisher CI whose
+    degrees of freedom are reduced by the number of covariate columns.
+
+    Returns a dict with simple vs partial r so the shift is visible. Falls back
+    to the simple correlation (partial = simple) when there is nothing to adjust.
+    """
+    import numpy as np
+    import pandas as pd
+    from sklearn.linear_model import LinearRegression
+
+    covariates = [c for c in (covariates or CONFOUNDER_DIMENSIONS) if c in df.columns]
+    cols = [metric, score_col] + covariates
+    sub = df[cols].dropna()
+    n = len(sub)
+    x = sub[metric].to_numpy(float)
+    y = sub[score_col].to_numpy(float)
+    simple_r = float(np.corrcoef(x, y)[0, 1]) if n >= 3 and x.std() and y.std() else float("nan")
+
+    # build a one-hot covariate design matrix; drop constant/degenerate columns
+    design = pd.get_dummies(sub[covariates].astype("object"), drop_first=True) if covariates else pd.DataFrame(index=sub.index)
+    k = design.shape[1]
+    if n < k + 4 or k == 0 or not (x.std() and y.std()):
+        return {
+            "metric": metric, "label": METRIC_LABELS.get(metric, metric), "n": n,
+            "simple_r": simple_r, "partial_r": simple_r,
+            "ci_low": float("nan"), "ci_high": float("nan"), "p": float("nan"),
+            "k_covariates": k, "covariates": covariates,
+        }
+
+    z = design.to_numpy(float)
+    rx = x - LinearRegression().fit(z, x).predict(z)
+    ry = y - LinearRegression().fit(z, y).predict(z)
+    if rx.std() == 0 or ry.std() == 0:
+        pr = float("nan")
+    else:
+        pr = float(np.corrcoef(rx, ry)[0, 1])
+
+    # Fisher CI + p on the partial r, dof reduced by covariate count
+    dof_n = n - k
+    if np.isnan(pr) or dof_n < 4 or abs(pr) >= 1.0:
+        lo = hi = p = float("nan")
+    else:
+        zf = np.arctanh(pr)
+        se = 1.0 / np.sqrt(dof_n - 3)
+        crit = stats.norm.ppf(0.975)
+        lo, hi = float(np.tanh(zf - crit * se)), float(np.tanh(zf + crit * se))
+        t = pr * np.sqrt((dof_n - 2) / max(1e-12, 1 - pr**2))
+        p = float(2 * stats.t.sf(abs(t), dof_n - 2))
+
+    return {
+        "metric": metric, "label": METRIC_LABELS.get(metric, metric), "n": n,
+        "simple_r": simple_r, "partial_r": pr, "ci_low": lo, "ci_high": hi,
+        "p": p, "effect": effect_label(pr) if not np.isnan(pr) else "n/a",
+        "k_covariates": k, "covariates": covariates,
+    }
+
+
 def correlation_report(
     conn,
     score_col: str = "mean_total_score",

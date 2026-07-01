@@ -18,15 +18,18 @@ import streamlit as st
 
 from config import DB_PATH, PHASE2_MIN_MATCHED_ROASTS
 from goodcup.analysis.calibration import calibration_report
-from goodcup.analysis.correlation import correlation_report
+from goodcup.analysis.correlation import correlation_report, partial_association
 from goodcup.analysis import descriptors as descriptors_analysis
+from goodcup.analysis.monitoring import consensus_control_chart, metric_stability
 from goodcup.analysis.lot_history import repeatability_summary, require_single_temperature_unit
 from goodcup.db import models
 from goodcup.dashboard.experiment_demo import (
     BLIND_PROFILE_MAP,
     DEFAULT_CUP_SCORES,
+    cups_needed,
     evaluate_blind_results,
 )
+from goodcup.recommend.similarity import fit_score_predictor, recommend_for_green
 from goodcup.knowledge import brew_sheet as brew_sheet_lib
 from goodcup.research import literature as literature_lib
 from goodcup.seed.generate import generate
@@ -449,6 +452,21 @@ def roast_insights(roasts: pd.DataFrame, mtime: float) -> None:
     table.columns = ["Variable", "N", "Effect r", "CI low", "CI high", "Raw p", "FDR p", "Magnitude", "Small sample"]
     st.dataframe(table, width="stretch", hide_index=True, column_config={"Effect r": st.column_config.NumberColumn(format="%.2f"), "Raw p": st.column_config.NumberColumn(format="%.4f"), "FDR p": st.column_config.NumberColumn(format="%.4f")})
 
+    st.markdown("### Does the signal survive its confounders?")
+    st.caption("Partial correlation holds machine, process, and origin constant. If the effect largely stays, the confounders don't explain it away; if it collapses, the raw association was likely confounded. Still correlational.")
+    conn = models.connect(DB_PATH)
+    try:
+        base = models.read_sql(conn, "SELECT * FROM matched_roasts")
+    finally:
+        conn.close()
+    metrics = df.dropna(subset=["r"]).head(5)["metric"].tolist()
+    adj_rows = []
+    for m in metrics:
+        pa = partial_association(base, m)
+        adj_rows.append({"Variable": pa["label"], "N": pa["n"], "Simple r": pa["simple_r"], "Adjusted r": pa["partial_r"], "CI low": pa["ci_low"], "CI high": pa["ci_high"], "p": pa["p"], "Covariates": pa["k_covariates"]})
+    adj = pd.DataFrame(adj_rows)
+    st.dataframe(adj, width="stretch", hide_index=True, column_config={"Simple r": st.column_config.NumberColumn(format="%.2f"), "Adjusted r": st.column_config.NumberColumn(format="%.2f"), "p": st.column_config.NumberColumn(format="%.4f")})
+
 
 def lot_history_page(roasts: pd.DataFrame, mtime: float) -> None:
     st.title("Lot history")
@@ -559,6 +577,35 @@ def calibration_page(mtime: float) -> None:
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
     st.caption("A review flag requires a practically meaningful mean deviation and a 95% confidence interval that excludes zero. It is a prompt to recalibrate, not a judgment of palate.")
 
+    st.markdown("### Panel consensus control chart")
+    st.caption("Per-session median cup score with 3-sigma limits (individuals/moving-range). A point outside the limits is a prompt to investigate a green change, calibration slip, or process shift — not an automatic verdict.")
+    conn = models.connect(DB_PATH)
+    try:
+        chart = consensus_control_chart(conn)
+        stability = metric_stability(conn, "dtr_pct")
+    finally:
+        conn.close()
+    if not chart.points.empty:
+        pts = chart.points.reset_index(drop=True)
+        pts["seq"] = range(1, len(pts) + 1)
+        colors = [ORANGE if o else GREEN for o in pts["out_of_control"]]
+        spc = go.Figure()
+        spc.add_hrect(y0=chart.lower, y1=chart.upper, fillcolor="#EDF3E9", line_width=0, opacity=0.6)
+        spc.add_hline(y=chart.center, line_color="#8B8882", line_dash="dot", annotation_text="center")
+        spc.add_hline(y=chart.upper, line_color=ORANGE, line_dash="dot", annotation_text="UCL")
+        spc.add_hline(y=chart.lower, line_color=ORANGE, line_dash="dot", annotation_text="LCL")
+        spc.add_trace(go.Scatter(x=pts["seq"], y=pts["value"], mode="lines+markers", line=dict(color="#AAA69D", width=1.5), marker=dict(color=colors, size=9), text=pts["label"], hovertemplate="<b>%{text}</b><br>Median score %{y:.2f}<extra></extra>"))
+        spc.update_layout(height=300, margin=dict(l=10, r=10, t=20, b=30), paper_bgcolor=CANVAS, plot_bgcolor=SURFACE, font=dict(family="Inter, sans-serif", color=INK, size=11), showlegend=False, xaxis=dict(title="Cupping session (time order)", dtick=1, gridcolor="#EEEAE3"), yaxis=dict(title="Panel consensus (median)", gridcolor="#EEEAE3"))
+        st.plotly_chart(spc, width="stretch", config={"displayModeBar": False})
+        if chart.n_out:
+            st.warning(f"{chart.n_out} session(s) fell outside the control limits — worth a look.")
+        else:
+            st.caption("All sessions are within control limits: consensus is stable over time.")
+
+    st.markdown("### Process stability (DTR by lot)")
+    st.caption("Repeatability of development time ratio across roasts of the same lot. High coefficient of variation = harder to reproduce; spread is repeatability, not quality.")
+    st.dataframe(stability.head(8), width="stretch", hide_index=True, column_config={"mean": st.column_config.NumberColumn("Mean DTR %", format="%.1f"), "sd": st.column_config.NumberColumn("SD", format="%.2f"), "cv_pct": st.column_config.NumberColumn("CV %", format="%.1f")})
+
 
 def experiment_lab() -> None:
     st.title("Experiment Lab")
@@ -592,6 +639,20 @@ def experiment_lab() -> None:
         with c2:
             st.markdown("#### Success rule")
             st.markdown("A directional lead of at least 0.5 points advances to a confirmation roast. One trial never changes the production standard by itself.")
+        st.markdown("#### Is this trial powered?")
+        p1, p2, p3 = st.columns(3)
+        with p1:
+            delta = st.number_input("Difference to detect (points)", min_value=0.1, max_value=5.0, value=0.5, step=0.25)
+        with p2:
+            spread = st.number_input("Within-profile spread (SD)", min_value=0.05, max_value=3.0, value=0.4, step=0.05)
+        with p3:
+            need = cups_needed(delta, spread)
+            st.metric("Cups needed per profile", need, help="Two-sided test, 80% power, alpha 0.05.")
+        planned = 3
+        if need > planned:
+            st.warning(f"The current plan uses {planned} cups per profile — enough to detect about a {(delta * (need / planned) ** 0.5):.1f}-point difference, not {delta:.2f}. Add replicates or expect only larger differences to show.")
+        else:
+            st.caption(f"{planned} cups per profile is sufficient to detect a {delta:.2f}-point difference at this spread.")
         with st.expander("Plan another experiment"):
             with st.form("new_experiment"):
                 name = st.text_input("Question", "Does a gentler post-crack RoR preserve floral clarity?")
@@ -739,6 +800,46 @@ def flavor_knowledge_page(roasts: pd.DataFrame, mtime: float) -> None:
             st.markdown(f'<div class="reveal"><strong>{link}</strong><span>{meta} · via {row.source_api}</span></div>', unsafe_allow_html=True)
 
 
+def recommendation_page(s: dict, roasts: pd.DataFrame) -> None:
+    st.title("Recommendation")
+    st.markdown('<p class="lede">Proven roast profiles from similar history — shown here on demo data, gated in production.</p>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="phase-lock"><strong>Production gate:</strong> recommendation unlocks only with ≥ {PHASE2_MIN_MATCHED_ROASTS} matched roasts and ≥ 6 similar historical greens. '
+        f'This demo has {s["matched"]} synthetic matched roasts so the mechanism is visible, but the logic below is exactly what stays locked on a real, sparse dataset — it is never unlocked by demo volume alone.</div>',
+        unsafe_allow_html=True,
+    )
+    lots = roasts.groupby(["green_id", "lot_name"], as_index=False).size().sort_values("lot_name")
+    lot_options = {r.lot_name: int(r.green_id) for r in lots.itertuples()}
+    lot = st.selectbox("Green lot to plan a roast for", list(lot_options))
+    conn = models.connect(DB_PATH)
+    try:
+        rec = recommend_for_green(conn, lot_options[lot])
+        model = fit_score_predictor(conn)
+    finally:
+        conn.close()
+
+    if not rec.available:
+        st.markdown(f'<div class="phase-lock"><strong>No recommendation.</strong> {rec.reason}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="guardrail">{rec.reason}</div>', unsafe_allow_html=True)
+        nb = pd.DataFrame(rec.neighbors)
+        display = nb[["mean_total_score", "n_cuppings", "dtr_pct", "development_time_s", "drop_temp", "process", "origin_country", "similarity"]].copy()
+        display.columns = ["Cup score", "N cups", "DTR %", "Dev time (s)", "Drop °C", "Process", "Origin", "Similarity"]
+        st.dataframe(display, width="stretch", hide_index=True, column_config={"Cup score": st.column_config.NumberColumn(format="%.2f"), "Similarity": st.column_config.ProgressColumn(min_value=0, max_value=1, format="%.2f")})
+        st.caption("Similarity = 1 means a near-identical historical roast. 'Why similar' is the standardized distance across DTR, development, drying, drop temperature, and total time.")
+
+    st.markdown("### Interpretable score model")
+    if not model.available:
+        st.info(model.reason)
+    else:
+        st.caption(f"Ridge regression, roast numerics → mean cup score. Cross-validated R² = {model.r2_cv} on N = {model.n}. Standardized coefficients show direction and relative weight — this is a correlational, exploratory aid, not a promise about a future roast.")
+        coef = pd.DataFrame([{"Feature": k, "Standardized weight": v} for k, v in model.coefficients.items()]).sort_values("Standardized weight", key=lambda c: c.abs(), ascending=False)
+        cfig = go.Figure(go.Bar(x=coef["Standardized weight"], y=coef["Feature"], orientation="h", marker_color=[GREEN if v > 0 else ORANGE for v in coef["Standardized weight"]]))
+        cfig.add_vline(x=0, line_color="#8B8882", line_dash="dot")
+        cfig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=25), paper_bgcolor=CANVAS, plot_bgcolor=SURFACE, font=dict(family="Inter, sans-serif", color=INK, size=11), xaxis_title="Standardized coefficient (→ higher score)")
+        st.plotly_chart(cfig, width="stretch", config={"displayModeBar": False})
+
+
 def brew_sheet_page(roasts: pd.DataFrame) -> None:
     st.title("Brew sheet")
     st.markdown('<p class="lede">The customer-facing end of the same chain: lot facts and cup notes from your data, with a starting recipe to dial in.</p>', unsafe_allow_html=True)
@@ -788,7 +889,7 @@ roasts = roast_table(mtime)
 with st.sidebar:
     st.image(str(ROOT / "assets" / "goodcup-mark.png"), width=76)
     st.markdown("<div style='text-align:center;font-size:.66rem;letter-spacing:.16em;font-weight:700;margin-top:-.7rem;margin-bottom:1.2rem'>ROAST INTELLIGENCE</div>", unsafe_allow_html=True)
-    page = st.radio("Navigation", ["Overview", "Lot history", "Experiment Lab", "Roast insights", "Calibration", "Flavor & knowledge", "Brew sheet", "Data library"], label_visibility="collapsed", key="nav_page")
+    page = st.radio("Navigation", ["Overview", "Lot history", "Experiment Lab", "Roast insights", "Calibration", "Flavor & knowledge", "Recommendation", "Brew sheet", "Data library"], label_visibility="collapsed", key="nav_page")
     st.divider()
     st.caption("LOCAL · OFFLINE · SQLITE")
     st.caption("Client demo · v0.1")
@@ -806,6 +907,8 @@ elif page == "Calibration":
     calibration_page(mtime)
 elif page == "Flavor & knowledge":
     flavor_knowledge_page(roasts, mtime)
+elif page == "Recommendation":
+    recommendation_page(s, roasts)
 elif page == "Brew sheet":
     brew_sheet_page(roasts)
 else:
