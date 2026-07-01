@@ -143,7 +143,11 @@ CREATE TABLE IF NOT EXISTS descriptors (
     raw_term          TEXT,
     wheel_category_l1 TEXT,
     wheel_category_l2 TEXT,
-    wheel_category_l3 TEXT
+    wheel_category_l3 TEXT,
+    -- how this row's wheel categories were derived: 'lexicon' (deterministic
+    -- bundled map), 'ai' (provider best-effort guess, labeled as such in the UI),
+    -- or NULL when the term stayed unmapped.
+    map_source        TEXT
 );
 
 -- --------------------------------------------------------------------------- --

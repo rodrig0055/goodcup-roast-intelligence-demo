@@ -32,6 +32,8 @@ from goodcup.dashboard.experiment_demo import (
 from goodcup.recommend.similarity import fit_score_predictor, recommend_for_green
 from goodcup.knowledge import brew_sheet as brew_sheet_lib
 from goodcup.research import literature as literature_lib
+from goodcup.ai import grounding as ai_grounding
+from goodcup.ai.provider import get_provider
 from goodcup.seed.generate import generate
 
 
@@ -84,6 +86,8 @@ def inject_css() -> None:
         .workspace-bar {{ display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid {RULE}; padding-bottom:0.75rem; margin-bottom:0.85rem; }}
         .workspace-name {{ color:{INK}; font-size:0.84rem; font-weight:650; }}
         .demo-chip {{ color:#0A6D22; background:#EDF5EA; border:1px solid #C8DDC3; padding:0.38rem 0.62rem; border-radius:7px; font-size:0.75rem; font-weight:650; }}
+        .ai-badge {{ display:inline-block; color:#8A4B12; background:#FBEFE4; border:1px solid #F0CCB2; padding:0.24rem 0.55rem; border-radius:6px; font-size:0.7rem; font-weight:700; letter-spacing:.02em; margin-bottom:0.4rem; }}
+        .ai-answer {{ background:{SURFACE}; border:1px solid {RULE}; border-left:3px solid {ORANGE}; border-radius:8px; padding:0.9rem 1.05rem; font-size:0.9rem; color:{INK}; line-height:1.5; margin-bottom:0.6rem; }}
         .lede {{ font-size:0.94rem; margin-top:-0.6rem; max-width:650px; }}
         .metric-rail {{ display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid {RULE}; border-bottom:1px solid {RULE}; margin:0.75rem 0 0.7rem; }}
         .metric {{ padding:1rem 1.1rem 0.95rem; border-right:1px solid {RULE}; }}
@@ -161,6 +165,13 @@ def ensure_demo() -> None:
     # EXISTS (or DROP+CREATE for views/triggers), so this is a safe, data-preserving
     # migration that adds any newly-introduced tables to an existing demo database.
     conn = models.init_db(DB_PATH, reset=False)
+    # data-preserving migration: add the descriptors.map_source column if an older
+    # demo DB predates it (CREATE TABLE IF NOT EXISTS won't add columns).
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(descriptors)").fetchall()}
+    if "map_source" not in cols:
+        conn.execute("ALTER TABLE descriptors ADD COLUMN map_source TEXT")
+        conn.execute("UPDATE descriptors SET map_source = 'lexicon' WHERE wheel_category_l1 IS NOT NULL")
+        conn.commit()
     count = conn.execute("SELECT COUNT(*) FROM roasts").fetchone()[0]
     conn.close()
     if count == 0:
@@ -262,6 +273,24 @@ def workspace_header() -> None:
         """<div class="workspace-bar"><span class="workspace-name">GoodCup R&amp;D · Demo workspace</span><span class="demo-chip">● Synthetic data</span></div>""",
         unsafe_allow_html=True,
     )
+
+
+def ai_answer(text: str, provider) -> None:
+    """Render an AI response with an honest provenance badge and the text.
+
+    The badge marks simulated (mock) output distinctly, the same way synthetic
+    data is labeled — an AI reply that looked real but was canned would be
+    dishonest."""
+    label = f"● Simulated AI · {provider.name}" if provider.simulated else f"● {provider.name}"
+    st.markdown(f'<span class="ai-badge">{label}</span>', unsafe_allow_html=True)
+    st.markdown(f'<div class="ai-answer">{text}</div>', unsafe_allow_html=True)
+
+
+def facts_table(facts) -> None:
+    """Show the computed evidence behind an AI answer, so prose never stands alone."""
+    if facts.available and facts.summary_rows:
+        st.caption(f"Evidence · {facts.analysis} (every number above comes from this table)")
+        st.dataframe(pd.DataFrame(facts.summary_rows), width="stretch", hide_index=True)
 
 
 def metric_rail(s: dict) -> None:
@@ -435,6 +464,14 @@ def overview(s: dict, roasts: pd.DataFrame, mtime: float) -> None:
         st.markdown('<div class="panel-title">What deserves a test roast</div><div class="panel-copy">These are correlational signals, not causal conclusions.</div>', unsafe_allow_html=True)
         st.markdown(insight_html(df), unsafe_allow_html=True)
         st.button("Design controlled test", on_click=lambda: st.session_state.update(nav_page="Experiment Lab"))
+        if st.button("Explain in plain language"):
+            conn = models.connect(DB_PATH)
+            try:
+                facts = ai_grounding.gather_association_facts(conn)
+            finally:
+                conn.close()
+            provider = get_provider()
+            ai_answer(provider.narrate(facts), provider)
     st.markdown("### One roast, end to end")
     options = roasts.dropna(subset=["mean_total_score"]).sort_values("mean_total_score", ascending=False)
     labels = {f"{r.roast_ref} · {r.lot_name} · {r.mean_total_score:.1f}": int(r.roast_id) for r in options.itertuples()}
@@ -752,6 +789,29 @@ def flavor_knowledge_page(roasts: pd.DataFrame, mtime: float) -> None:
                 fig.add_trace(go.Bar(name=proc, y=pivot.index, x=pivot[proc], orientation="h"))
             fig.update_layout(barmode="stack", height=320, margin=dict(l=10, r=10, t=10, b=25), paper_bgcolor=CANVAS, plot_bgcolor=SURFACE, font=dict(family="Inter, sans-serif", color=INK, size=11), legend=dict(orientation="h", y=1.14), xaxis_title="Descriptor mentions")
             st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        conn = models.connect(DB_PATH)
+        try:
+            unmapped = models.read_sql(conn, "SELECT DISTINCT raw_term FROM descriptors WHERE wheel_category_l1 IS NULL")
+            ai_rows = models.read_sql(conn, "SELECT DISTINCT raw_term, wheel_category_l1, wheel_category_l3 FROM descriptors WHERE map_source='ai'")
+        finally:
+            conn.close()
+        st.caption(f"{len(unmapped)} tasting term(s) unmapped by the bundled lexicon.")
+        if st.button("Map unknown terms with AI"):
+            provider = get_provider()
+            conn = models.connect(DB_PATH)
+            try:
+                descriptors_analysis.rebuild_descriptors(conn, provider=provider)
+                ai_rows = models.read_sql(conn, "SELECT DISTINCT raw_term, wheel_category_l1, wheel_category_l3 FROM descriptors WHERE map_source='ai'")
+            finally:
+                conn.close()
+            st.markdown(f'<span class="ai-badge">● Simulated AI · {provider.name}</span>', unsafe_allow_html=True)
+            if ai_rows.empty:
+                st.info("No unmapped terms were confidently placed. AI guesses stay separate from lexicon mappings and are never merged in silently.")
+            else:
+                ai_rows.columns = ["Term", "Mapped L1", "Mapped L3"]
+                st.dataframe(ai_rows, width="stretch", hide_index=True)
+        elif not ai_rows.empty:
+            st.caption(f"{len(ai_rows)} term(s) currently AI-mapped (flagged separately from lexicon mappings).")
     with right:
         st.markdown("### Does a flavor family track cup score?")
         st.caption("Roast-level association between a flavor family being present and mean cup score. Correlational, guardrailed — a hypothesis to test, not a cause.")
@@ -798,6 +858,16 @@ def flavor_knowledge_page(roasts: pd.DataFrame, mtime: float) -> None:
             meta = " · ".join(str(x) for x in (row.authors, row.year, row.venue) if x and str(x) != "None")
             link = f'<a href="{row.url}" target="_blank">{row.title}</a>' if row.url else row.title
             st.markdown(f'<div class="reveal"><strong>{link}</strong><span>{meta} · via {row.source_api}</span></div>', unsafe_allow_html=True)
+        if st.button("Synthesize findings"):
+            provider = get_provider()
+            papers = cached_refs.head(6).to_dict("records")
+            conn = models.connect(DB_PATH)
+            try:
+                assoc_facts = ai_grounding.gather_association_facts(conn)
+            finally:
+                conn.close()
+            synthesis = provider.synthesize_literature("development time ratio and cup score", papers, assoc_facts)
+            ai_answer(synthesis, provider)
 
 
 def recommendation_page(s: dict, roasts: pd.DataFrame) -> None:
@@ -865,6 +935,36 @@ def brew_sheet_page(roasts: pd.DataFrame) -> None:
     )
 
 
+def ask_goodcup_page() -> None:
+    st.title("Ask GoodCup")
+    st.markdown('<p class="lede">Ask in plain language. Answers are grounded in your own analysis — every number is computed, never invented.</p>', unsafe_allow_html=True)
+    provider = get_provider()
+    st.markdown(
+        '<div class="guardrail"><strong>How this works.</strong> Your question is routed to the matching analysis (associations, calibration, lot repeatability, flavor, or the gated recommender). The AI only narrates the numbers that analysis returns — it cannot compute a statistic or unlock a gated recommendation.</div>',
+        unsafe_allow_html=True,
+    )
+    examples = [
+        "What roast metric is most associated with cup score?",
+        "Is any cupper drifting from the panel?",
+        "Which flavor families track higher scores?",
+        "Recommend a roast profile for a lot.",
+    ]
+    chosen = st.selectbox("Example questions", ["Type my own…"] + examples)
+    default_q = "" if chosen == "Type my own…" else chosen
+    question = st.text_input("Your question", value=default_q, placeholder="e.g. what drives cup score?")
+    if st.button("Ask", type="primary") and question.strip():
+        conn = models.connect(DB_PATH)
+        try:
+            facts = ai_grounding.route_question(conn, question)
+            answer = provider.answer(question, facts)
+        finally:
+            conn.close()
+        ai_answer(answer, provider)
+        facts_table(facts)
+        if not facts.available:
+            st.info("This is a deliberate limit, not a failure — the analysis or the Phase-2 gate declined to answer, and the AI reports that rather than guessing.")
+
+
 def data_library(s: dict, roasts: pd.DataFrame) -> None:
     st.title("Data library")
     st.markdown('<p class="lede">A single local record connecting green lots, roast curves, and cup scores.</p>', unsafe_allow_html=True)
@@ -889,7 +989,7 @@ roasts = roast_table(mtime)
 with st.sidebar:
     st.image(str(ROOT / "assets" / "goodcup-mark.png"), width=76)
     st.markdown("<div style='text-align:center;font-size:.66rem;letter-spacing:.16em;font-weight:700;margin-top:-.7rem;margin-bottom:1.2rem'>ROAST INTELLIGENCE</div>", unsafe_allow_html=True)
-    page = st.radio("Navigation", ["Overview", "Lot history", "Experiment Lab", "Roast insights", "Calibration", "Flavor & knowledge", "Recommendation", "Brew sheet", "Data library"], label_visibility="collapsed", key="nav_page")
+    page = st.radio("Navigation", ["Overview", "Ask GoodCup", "Lot history", "Experiment Lab", "Roast insights", "Calibration", "Flavor & knowledge", "Recommendation", "Brew sheet", "Data library"], label_visibility="collapsed", key="nav_page")
     st.divider()
     st.caption("LOCAL · OFFLINE · SQLITE")
     st.caption("Client demo · v0.1")
@@ -897,6 +997,8 @@ with st.sidebar:
 workspace_header()
 if page == "Overview":
     overview(s, roasts, mtime)
+elif page == "Ask GoodCup":
+    ask_goodcup_page()
 elif page == "Lot history":
     lot_history_page(roasts, mtime)
 elif page == "Experiment Lab":
