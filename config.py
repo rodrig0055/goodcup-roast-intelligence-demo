@@ -12,6 +12,7 @@ non-developer can read and edit them.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
@@ -46,10 +47,12 @@ CONTACT_EMAIL: str = "roasting@goodcup.local"
 #: The AI layer only narrates numbers computed by the analysis layer -- it never
 #: computes a statistic or bypasses the Phase 2 gate, regardless of provider.
 #:
-#: Default is "mock" on purpose: the hosted demo is public and ephemeral, so a
-#: real key placed there would be spent by anonymous viewers. Set AI_PROVIDER
-#: ="gemini" (plus GEMINI_API_KEY) locally, or in Streamlit secrets, to enable it.
-AI_PROVIDER: str = "mock"
+#: Default is "gemini", but get_provider() automatically falls back to the offline
+#: mock whenever no GEMINI_API_KEY is available. So locally (key exported) you get
+#: Gemini; the public/ephemeral hosted demo -- which has no key -- safely runs the
+#: mock without showing "no key" messages. Override per environment with the
+#: AI_PROVIDER env var (e.g. AI_PROVIDER=mock to force offline).
+AI_PROVIDER: str = os.environ.get("AI_PROVIDER", "gemini")
 
 #: Gemini model id used by the "gemini" provider only (ignored by "mock").
 #: Configurable so a deployment can swap it without code changes.

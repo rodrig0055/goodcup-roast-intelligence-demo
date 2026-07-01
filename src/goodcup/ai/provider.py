@@ -50,11 +50,18 @@ class AIProvider(ABC):
 
 
 def get_provider() -> AIProvider:
-    """Return the configured provider. Defaults to the offline mock."""
+    """Return the configured provider.
+
+    Defaults to Gemini, but transparently falls back to the offline mock when
+    Gemini has no API key available — so the same config is safe both locally
+    (key present -> real Gemini) and on the public hosted demo (no key -> mock),
+    without ever surfacing "no key" errors to viewers.
+    """
+    from goodcup.ai.mock import MockProvider
+
     if AI_PROVIDER == "gemini":
         from goodcup.ai.gemini import GeminiProvider
 
-        return GeminiProvider()
-    from goodcup.ai.mock import MockProvider
-
+        provider = GeminiProvider()
+        return provider if provider.available else MockProvider()
     return MockProvider()
