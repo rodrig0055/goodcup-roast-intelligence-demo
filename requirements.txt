@@ -9,6 +9,7 @@ scipy>=1.11        # bootstrap CIs, correlation stats, Benjamini-Hochberg FDR
 scikit-learn>=1.3  # Phase 2 only: StandardScaler + NearestNeighbors (interpretable)
 plotly>=5.18       # interactive roast curves + correlation/calibration charts
 streamlit>=1.30    # local single-user dashboard (one-command launch)
+certifi>=2023.7    # CA bundle for verified TLS to free scholarly APIs (literature pull)
 
 # Dev / test only:
 pytest>=7.4        # test runner; `pytest` must be green before advancing phases

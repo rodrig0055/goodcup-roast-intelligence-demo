@@ -194,3 +194,53 @@ def read_sql(conn: sqlite3.Connection, sql: str, params: Iterable[Any] | None = 
     import pandas as pd  # lazy: keeps this module importable for pure-schema tests
 
     return pd.read_sql_query(sql, conn, params=list(params) if params else None)
+
+
+# --------------------------------------------------------------------------- #
+# Institutional knowledge: experiments + cited literature
+# --------------------------------------------------------------------------- #
+def upsert_experiment(conn: sqlite3.Connection, data: Mapping[str, Any]) -> tuple[int, bool]:
+    """Insert/return a durable experiment (decision) record."""
+    return _upsert(conn, "experiments", data, "experiment_id")
+
+
+def list_experiments(conn: sqlite3.Connection):
+    """All experiment records, newest first."""
+    return read_sql(
+        conn,
+        "SELECT * FROM experiments ORDER BY COALESCE(created_at, '') DESC, experiment_id DESC",
+    )
+
+
+def upsert_reference(conn: sqlite3.Connection, data: Mapping[str, Any]) -> tuple[int, bool]:
+    """Insert/return a cached scholarly reference (deduped on source_hash)."""
+    return _upsert(conn, "paper_references", data, "reference_id")
+
+
+def link_reference_to_experiment(
+    conn: sqlite3.Connection, experiment_id: int, reference_id: int
+) -> None:
+    """Cite a cached paper against an experiment (idempotent)."""
+    conn.execute(
+        "INSERT OR IGNORE INTO experiment_references (experiment_id, reference_id) VALUES (?, ?)",
+        (experiment_id, reference_id),
+    )
+    conn.commit()
+
+
+def list_references(conn: sqlite3.Connection, experiment_id: int | None = None):
+    """Cached references; scoped to one experiment's citations when given an id."""
+    if experiment_id is None:
+        return read_sql(
+            conn, "SELECT * FROM paper_references ORDER BY reference_id DESC"
+        )
+    return read_sql(
+        conn,
+        """
+        SELECT pr.* FROM paper_references pr
+        JOIN experiment_references er ON er.reference_id = pr.reference_id
+        WHERE er.experiment_id = ?
+        ORDER BY pr.reference_id DESC
+        """,
+        [experiment_id],
+    )

@@ -18,14 +18,20 @@ import streamlit as st
 
 from config import DB_PATH, PHASE2_MIN_MATCHED_ROASTS
 from goodcup.analysis.calibration import calibration_report
-from goodcup.analysis.correlation import correlation_report
+from goodcup.analysis.correlation import correlation_report, partial_association
+from goodcup.analysis import descriptors as descriptors_analysis
+from goodcup.analysis.monitoring import consensus_control_chart, metric_stability
 from goodcup.analysis.lot_history import repeatability_summary, require_single_temperature_unit
 from goodcup.db import models
 from goodcup.dashboard.experiment_demo import (
     BLIND_PROFILE_MAP,
     DEFAULT_CUP_SCORES,
+    cups_needed,
     evaluate_blind_results,
 )
+from goodcup.recommend.similarity import fit_score_predictor, recommend_for_green
+from goodcup.knowledge import brew_sheet as brew_sheet_lib
+from goodcup.research import literature as literature_lib
 from goodcup.seed.generate import generate
 
 
@@ -151,14 +157,21 @@ def inject_css() -> None:
 
 
 def ensure_demo() -> None:
-    try:
-        conn = models.connect(DB_PATH)
-        count = conn.execute("SELECT COUNT(*) FROM roasts").fetchone()[0]
-        conn.close()
-    except Exception:
-        count = 0
+    # Apply the schema idempotently first. Every statement is CREATE ... IF NOT
+    # EXISTS (or DROP+CREATE for views/triggers), so this is a safe, data-preserving
+    # migration that adds any newly-introduced tables to an existing demo database.
+    conn = models.init_db(DB_PATH, reset=False)
+    count = conn.execute("SELECT COUNT(*) FROM roasts").fetchone()[0]
+    conn.close()
     if count == 0:
         generate("full", DB_PATH)
+    # descriptors are a rebuildable derived table; ensure they exist for the demo
+    conn = models.connect(DB_PATH)
+    try:
+        if conn.execute("SELECT COUNT(*) FROM descriptors").fetchone()[0] == 0:
+            descriptors_analysis.rebuild_descriptors(conn)
+    finally:
+        conn.close()
 
 
 @st.cache_data(show_spinner=False)
@@ -439,6 +452,21 @@ def roast_insights(roasts: pd.DataFrame, mtime: float) -> None:
     table.columns = ["Variable", "N", "Effect r", "CI low", "CI high", "Raw p", "FDR p", "Magnitude", "Small sample"]
     st.dataframe(table, width="stretch", hide_index=True, column_config={"Effect r": st.column_config.NumberColumn(format="%.2f"), "Raw p": st.column_config.NumberColumn(format="%.4f"), "FDR p": st.column_config.NumberColumn(format="%.4f")})
 
+    st.markdown("### Does the signal survive its confounders?")
+    st.caption("Partial correlation holds machine, process, and origin constant. If the effect largely stays, the confounders don't explain it away; if it collapses, the raw association was likely confounded. Still correlational.")
+    conn = models.connect(DB_PATH)
+    try:
+        base = models.read_sql(conn, "SELECT * FROM matched_roasts")
+    finally:
+        conn.close()
+    metrics = df.dropna(subset=["r"]).head(5)["metric"].tolist()
+    adj_rows = []
+    for m in metrics:
+        pa = partial_association(base, m)
+        adj_rows.append({"Variable": pa["label"], "N": pa["n"], "Simple r": pa["simple_r"], "Adjusted r": pa["partial_r"], "CI low": pa["ci_low"], "CI high": pa["ci_high"], "p": pa["p"], "Covariates": pa["k_covariates"]})
+    adj = pd.DataFrame(adj_rows)
+    st.dataframe(adj, width="stretch", hide_index=True, column_config={"Simple r": st.column_config.NumberColumn(format="%.2f"), "Adjusted r": st.column_config.NumberColumn(format="%.2f"), "p": st.column_config.NumberColumn(format="%.4f")})
+
 
 def lot_history_page(roasts: pd.DataFrame, mtime: float) -> None:
     st.title("Lot history")
@@ -549,6 +577,35 @@ def calibration_page(mtime: float) -> None:
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
     st.caption("A review flag requires a practically meaningful mean deviation and a 95% confidence interval that excludes zero. It is a prompt to recalibrate, not a judgment of palate.")
 
+    st.markdown("### Panel consensus control chart")
+    st.caption("Per-session median cup score with 3-sigma limits (individuals/moving-range). A point outside the limits is a prompt to investigate a green change, calibration slip, or process shift — not an automatic verdict.")
+    conn = models.connect(DB_PATH)
+    try:
+        chart = consensus_control_chart(conn)
+        stability = metric_stability(conn, "dtr_pct")
+    finally:
+        conn.close()
+    if not chart.points.empty:
+        pts = chart.points.reset_index(drop=True)
+        pts["seq"] = range(1, len(pts) + 1)
+        colors = [ORANGE if o else GREEN for o in pts["out_of_control"]]
+        spc = go.Figure()
+        spc.add_hrect(y0=chart.lower, y1=chart.upper, fillcolor="#EDF3E9", line_width=0, opacity=0.6)
+        spc.add_hline(y=chart.center, line_color="#8B8882", line_dash="dot", annotation_text="center")
+        spc.add_hline(y=chart.upper, line_color=ORANGE, line_dash="dot", annotation_text="UCL")
+        spc.add_hline(y=chart.lower, line_color=ORANGE, line_dash="dot", annotation_text="LCL")
+        spc.add_trace(go.Scatter(x=pts["seq"], y=pts["value"], mode="lines+markers", line=dict(color="#AAA69D", width=1.5), marker=dict(color=colors, size=9), text=pts["label"], hovertemplate="<b>%{text}</b><br>Median score %{y:.2f}<extra></extra>"))
+        spc.update_layout(height=300, margin=dict(l=10, r=10, t=20, b=30), paper_bgcolor=CANVAS, plot_bgcolor=SURFACE, font=dict(family="Inter, sans-serif", color=INK, size=11), showlegend=False, xaxis=dict(title="Cupping session (time order)", dtick=1, gridcolor="#EEEAE3"), yaxis=dict(title="Panel consensus (median)", gridcolor="#EEEAE3"))
+        st.plotly_chart(spc, width="stretch", config={"displayModeBar": False})
+        if chart.n_out:
+            st.warning(f"{chart.n_out} session(s) fell outside the control limits — worth a look.")
+        else:
+            st.caption("All sessions are within control limits: consensus is stable over time.")
+
+    st.markdown("### Process stability (DTR by lot)")
+    st.caption("Repeatability of development time ratio across roasts of the same lot. High coefficient of variation = harder to reproduce; spread is repeatability, not quality.")
+    st.dataframe(stability.head(8), width="stretch", hide_index=True, column_config={"mean": st.column_config.NumberColumn("Mean DTR %", format="%.1f"), "sd": st.column_config.NumberColumn("SD", format="%.2f"), "cv_pct": st.column_config.NumberColumn("CV %", format="%.1f")})
+
 
 def experiment_lab() -> None:
     st.title("Experiment Lab")
@@ -582,6 +639,20 @@ def experiment_lab() -> None:
         with c2:
             st.markdown("#### Success rule")
             st.markdown("A directional lead of at least 0.5 points advances to a confirmation roast. One trial never changes the production standard by itself.")
+        st.markdown("#### Is this trial powered?")
+        p1, p2, p3 = st.columns(3)
+        with p1:
+            delta = st.number_input("Difference to detect (points)", min_value=0.1, max_value=5.0, value=0.5, step=0.25)
+        with p2:
+            spread = st.number_input("Within-profile spread (SD)", min_value=0.05, max_value=3.0, value=0.4, step=0.05)
+        with p3:
+            need = cups_needed(delta, spread)
+            st.metric("Cups needed per profile", need, help="Two-sided test, 80% power, alpha 0.05.")
+        planned = 3
+        if need > planned:
+            st.warning(f"The current plan uses {planned} cups per profile — enough to detect about a {(delta * (need / planned) ** 0.5):.1f}-point difference, not {delta:.2f}. Add replicates or expect only larger differences to show.")
+        else:
+            st.caption(f"{planned} cups per profile is sufficient to detect a {delta:.2f}-point difference at this spread.")
         with st.expander("Plan another experiment"):
             with st.form("new_experiment"):
                 name = st.text_input("Question", "Does a gentler post-crack RoR preserve floral clarity?")
@@ -631,12 +702,167 @@ def experiment_lab() -> None:
             st.markdown("#### Decision record")
             d1, d2 = st.columns(2)
             with d1:
-                st.selectbox("Next action", ["Schedule confirmation roast", "Repeat this comparison", "Stop this hypothesis"])
+                next_action = st.selectbox("Next action", ["Schedule confirmation roast", "Repeat this comparison", "Stop this hypothesis"])
             with d2:
-                st.text_input("Owner", "Head Roaster")
-            st.text_area("R&D note", "Treatment A showed the clearest fruit expression. Confirm on a fresh roast day before changing the production standard.")
+                owner = st.text_input("Owner", "Head Roaster")
+            note = st.text_area("R&D note", "Treatment A showed the clearest fruit expression. Confirm on a fresh roast day before changing the production standard.")
             if st.button("Record next decision"):
-                st.success("Decision recorded in this demo session. The next roast would inherit this experiment ID.")
+                import json as _json
+                from datetime import date as _date
+                decision_text = f"{next_action}. {result['decision']} {note}".strip()
+                conn = models.connect(DB_PATH)
+                try:
+                    models.upsert_experiment(conn, {
+                        "created_at": _date.today().isoformat(),
+                        "title": "EXP-006 · DTR boundary test",
+                        "hypothesis": "Within this green and machine, extending DTR toward 20.0% is associated with a higher blind cupping score.",
+                        "variable": "Development time",
+                        "success_rule": "Blind score lead >= 0.5 with no clarity loss",
+                        "status": "decided",
+                        "blind_results": _json.dumps(result["ranking"]),
+                        "decision": decision_text,
+                        "owner": owner,
+                        "source_hash": f"exp006-{_date.today().isoformat()}-{winner['profile']}",
+                    })
+                finally:
+                    conn.close()
+                st.success("Decision recorded to the durable log. See it on the Flavor & knowledge page.")
+
+
+def flavor_knowledge_page(roasts: pd.DataFrame, mtime: float) -> None:
+    st.title("Flavor & knowledge")
+    st.markdown('<p class="lede">Turn tasting notes, decisions, and published science into memory the team can query.</p>', unsafe_allow_html=True)
+    conn = models.connect(DB_PATH)
+    try:
+        freq = descriptors_analysis.descriptor_frequency(conn, by="process")
+        assoc = descriptors_analysis.descriptor_score_association(conn)
+        experiments = models.list_experiments(conn)
+        cached_refs = models.list_references(conn)
+    finally:
+        conn.close()
+
+    left, right = st.columns([1, 1], gap="large")
+    with left:
+        st.markdown("### Flavor map")
+        st.caption("Descriptor mentions mapped onto the 2016 WCR/SCA flavor wheel, by process. Unmapped terms are kept but not charted.")
+        if not freq.empty:
+            pivot = freq.pivot_table(index="wheel_category_l1", columns="process", values="n", fill_value=0)
+            fig = go.Figure()
+            for proc in pivot.columns:
+                fig.add_trace(go.Bar(name=proc, y=pivot.index, x=pivot[proc], orientation="h"))
+            fig.update_layout(barmode="stack", height=320, margin=dict(l=10, r=10, t=10, b=25), paper_bgcolor=CANVAS, plot_bgcolor=SURFACE, font=dict(family="Inter, sans-serif", color=INK, size=11), legend=dict(orientation="h", y=1.14), xaxis_title="Descriptor mentions")
+            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+    with right:
+        st.markdown("### Does a flavor family track cup score?")
+        st.caption("Roast-level association between a flavor family being present and mean cup score. Correlational, guardrailed — a hypothesis to test, not a cause.")
+        if assoc.empty:
+            st.info("Not enough descriptor variety yet to test associations.")
+        else:
+            table = assoc[["category", "n", "n_present", "r", "ci_low", "ci_high", "p_raw", "p_fdr", "effect"]].copy()
+            table.columns = ["Flavor family", "N", "Present", "Effect r", "CI low", "CI high", "Raw p", "FDR p", "Magnitude"]
+            st.dataframe(table, width="stretch", hide_index=True, column_config={"Effect r": st.column_config.NumberColumn(format="%.2f"), "Raw p": st.column_config.NumberColumn(format="%.3f"), "FDR p": st.column_config.NumberColumn(format="%.3f")})
+
+    st.markdown("### Decision log")
+    st.caption("Durable experiment decisions — institutional memory that outlasts any single roaster.")
+    if experiments.empty:
+        st.info("No decisions recorded yet. Run a trial in the Experiment Lab and record its decision to start the log.")
+    else:
+        cols = [c for c in ["created_at", "title", "variable", "decision", "owner"] if c in experiments.columns]
+        st.dataframe(experiments[cols], width="stretch", hide_index=True)
+
+    st.markdown("### Literature")
+    st.caption("Pull published science behind a hypothesis from free scholarly APIs and cache it locally. The online search is the only network step; saved papers stay available offline.")
+    with st.form("lit_search"):
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            query = st.text_input("Search papers", "development time ratio coffee cupping score", label_visibility="collapsed")
+        with c2:
+            source = st.selectbox("Source", ["crossref", "semantic_scholar", "arxiv"], label_visibility="collapsed")
+        searched = st.form_submit_button("Search & cache")
+    if searched and query.strip():
+        try:
+            papers = literature_lib.search_papers(query, source=source, limit=6)
+            conn = models.connect(DB_PATH)
+            try:
+                literature_lib.save_papers(conn, papers, query=query)
+                cached_refs = models.list_references(conn)
+            finally:
+                conn.close()
+            st.success(f"Found and cached {len(papers)} papers for “{query}”.")
+        except literature_lib.LiteratureUnavailable:
+            st.warning("No network right now — showing papers already cached locally.")
+    if cached_refs.empty:
+        st.info("No cached references yet.")
+    else:
+        for row in cached_refs.head(12).itertuples():
+            meta = " · ".join(str(x) for x in (row.authors, row.year, row.venue) if x and str(x) != "None")
+            link = f'<a href="{row.url}" target="_blank">{row.title}</a>' if row.url else row.title
+            st.markdown(f'<div class="reveal"><strong>{link}</strong><span>{meta} · via {row.source_api}</span></div>', unsafe_allow_html=True)
+
+
+def recommendation_page(s: dict, roasts: pd.DataFrame) -> None:
+    st.title("Recommendation")
+    st.markdown('<p class="lede">Proven roast profiles from similar history — shown here on demo data, gated in production.</p>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="phase-lock"><strong>Production gate:</strong> recommendation unlocks only with ≥ {PHASE2_MIN_MATCHED_ROASTS} matched roasts and ≥ 6 similar historical greens. '
+        f'This demo has {s["matched"]} synthetic matched roasts so the mechanism is visible, but the logic below is exactly what stays locked on a real, sparse dataset — it is never unlocked by demo volume alone.</div>',
+        unsafe_allow_html=True,
+    )
+    lots = roasts.groupby(["green_id", "lot_name"], as_index=False).size().sort_values("lot_name")
+    lot_options = {r.lot_name: int(r.green_id) for r in lots.itertuples()}
+    lot = st.selectbox("Green lot to plan a roast for", list(lot_options))
+    conn = models.connect(DB_PATH)
+    try:
+        rec = recommend_for_green(conn, lot_options[lot])
+        model = fit_score_predictor(conn)
+    finally:
+        conn.close()
+
+    if not rec.available:
+        st.markdown(f'<div class="phase-lock"><strong>No recommendation.</strong> {rec.reason}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="guardrail">{rec.reason}</div>', unsafe_allow_html=True)
+        nb = pd.DataFrame(rec.neighbors)
+        display = nb[["mean_total_score", "n_cuppings", "dtr_pct", "development_time_s", "drop_temp", "process", "origin_country", "similarity"]].copy()
+        display.columns = ["Cup score", "N cups", "DTR %", "Dev time (s)", "Drop °C", "Process", "Origin", "Similarity"]
+        st.dataframe(display, width="stretch", hide_index=True, column_config={"Cup score": st.column_config.NumberColumn(format="%.2f"), "Similarity": st.column_config.ProgressColumn(min_value=0, max_value=1, format="%.2f")})
+        st.caption("Similarity = 1 means a near-identical historical roast. 'Why similar' is the standardized distance across DTR, development, drying, drop temperature, and total time.")
+
+    st.markdown("### Interpretable score model")
+    if not model.available:
+        st.info(model.reason)
+    else:
+        st.caption(f"Ridge regression, roast numerics → mean cup score. Cross-validated R² = {model.r2_cv} on N = {model.n}. Standardized coefficients show direction and relative weight — this is a correlational, exploratory aid, not a promise about a future roast.")
+        coef = pd.DataFrame([{"Feature": k, "Standardized weight": v} for k, v in model.coefficients.items()]).sort_values("Standardized weight", key=lambda c: c.abs(), ascending=False)
+        cfig = go.Figure(go.Bar(x=coef["Standardized weight"], y=coef["Feature"], orientation="h", marker_color=[GREEN if v > 0 else ORANGE for v in coef["Standardized weight"]]))
+        cfig.add_vline(x=0, line_color="#8B8882", line_dash="dot")
+        cfig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=25), paper_bgcolor=CANVAS, plot_bgcolor=SURFACE, font=dict(family="Inter, sans-serif", color=INK, size=11), xaxis_title="Standardized coefficient (→ higher score)")
+        st.plotly_chart(cfig, width="stretch", config={"displayModeBar": False})
+
+
+def brew_sheet_page(roasts: pd.DataFrame) -> None:
+    st.title("Brew sheet")
+    st.markdown('<p class="lede">The customer-facing end of the same chain: lot facts and cup notes from your data, with a starting recipe to dial in.</p>', unsafe_allow_html=True)
+    lots = roasts.groupby(["green_id", "lot_name"], as_index=False).size().sort_values("lot_name")
+    lot_options = {r.lot_name: int(r.green_id) for r in lots.itertuples()}
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        lot = st.selectbox("Green lot", list(lot_options))
+    with c2:
+        method = st.selectbox("Method", list(brew_sheet_lib.METHODS))
+    conn = models.connect(DB_PATH)
+    try:
+        sheet = brew_sheet_lib.build_brew_sheet(conn, lot_options[lot], method=method)
+    finally:
+        conn.close()
+    html = brew_sheet_lib.render_brew_sheet_html(sheet)
+    st.markdown(html, unsafe_allow_html=True)
+    st.download_button(
+        "Download brew sheet (HTML)",
+        f"<!doctype html><meta charset='utf-8'><title>{sheet['lot_name']} brew sheet</title><body style='background:#F3F1ED;padding:24px'>{html}",
+        file_name=f"brew_sheet_{sheet['lot_name'].replace(' ', '_').lower()}.html",
+        mime="text/html",
+    )
 
 
 def data_library(s: dict, roasts: pd.DataFrame) -> None:
@@ -663,7 +889,7 @@ roasts = roast_table(mtime)
 with st.sidebar:
     st.image(str(ROOT / "assets" / "goodcup-mark.png"), width=76)
     st.markdown("<div style='text-align:center;font-size:.66rem;letter-spacing:.16em;font-weight:700;margin-top:-.7rem;margin-bottom:1.2rem'>ROAST INTELLIGENCE</div>", unsafe_allow_html=True)
-    page = st.radio("Navigation", ["Overview", "Lot history", "Experiment Lab", "Roast insights", "Calibration", "Data library"], label_visibility="collapsed", key="nav_page")
+    page = st.radio("Navigation", ["Overview", "Lot history", "Experiment Lab", "Roast insights", "Calibration", "Flavor & knowledge", "Recommendation", "Brew sheet", "Data library"], label_visibility="collapsed", key="nav_page")
     st.divider()
     st.caption("LOCAL · OFFLINE · SQLITE")
     st.caption("Client demo · v0.1")
@@ -679,5 +905,11 @@ elif page == "Roast insights":
     roast_insights(roasts, mtime)
 elif page == "Calibration":
     calibration_page(mtime)
+elif page == "Flavor & knowledge":
+    flavor_knowledge_page(roasts, mtime)
+elif page == "Recommendation":
+    recommendation_page(s, roasts)
+elif page == "Brew sheet":
+    brew_sheet_page(roasts)
 else:
     data_library(s, roasts)
