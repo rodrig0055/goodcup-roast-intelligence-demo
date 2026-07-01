@@ -10,8 +10,15 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from config import AI_PROVIDER
 from goodcup.ai.grounding import GroundedFacts
+
+# The AI provider is an OPTIONAL feature. Read its config defensively so that a
+# missing/partial `config` (e.g. an out-of-date deploy) degrades to the offline
+# mock instead of crashing the whole dashboard at import time.
+try:
+    from config import AI_PROVIDER
+except Exception:  # ImportError, or config missing the symbol
+    AI_PROVIDER = "mock"
 
 
 class AIProvider(ABC):

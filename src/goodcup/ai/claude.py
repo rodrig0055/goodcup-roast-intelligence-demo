@@ -20,9 +20,13 @@ methods pass facts as context and constrain output to them.
 
 from __future__ import annotations
 
-from config import AI_MODEL
 from goodcup.ai.grounding import GroundedFacts
 from goodcup.ai.provider import AIProvider
+
+try:
+    from config import AI_MODEL
+except Exception:
+    AI_MODEL = "claude-opus-4-8"
 
 
 def _load_client():

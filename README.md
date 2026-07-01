@@ -17,6 +17,27 @@ The interactive Experiment Lab is intentionally session-only in the MVP. It demo
 
 The Lot History page closes the roast-learning loop for each green: score trend across repeated roasts, BT/ET/RoR overlays for up to five profiles, best-roast parameter comparison, ambient-condition exploration, curve coverage, and repeatability spread. Curve overlays refuse mixed or missing temperature units instead of silently corrupting comparisons.
 
+## Deploy to Streamlit Community Cloud
+
+The app is deploy-ready — no secrets or API keys are needed (the AI layer runs an
+offline mock by default). At [share.streamlit.io](https://share.streamlit.io):
+
+- **Repository:** this GitHub repo · **Branch:** `main`
+- **Main file path:** `src/goodcup/dashboard/app.py`
+- **Python version** (Advanced settings): 3.12 (the repo requires ≥ 3.11)
+
+Dependencies install from `requirements.txt`; `app.py` bootstraps its own import
+path, so no editable install is needed. On first boot the app seeds the
+deterministic synthetic workspace. Notes for the hosted demo:
+
+- The app is **public** by link — this is fine because all data is synthetic and labeled.
+- The container filesystem is **ephemeral**: the SQLite store re-seeds on reboot, so
+  viewer-created state (recorded experiment decisions, cached literature) does not persist.
+- It is a **single shared instance**, not multi-tenant.
+
+If a deploy shows a stale error after a push, use **Manage app → Reboot** to pull
+the latest commit.
+
 ## Verify
 
 ```bash
