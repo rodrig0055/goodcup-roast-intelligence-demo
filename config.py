@@ -29,6 +29,11 @@ DB_PATH: Path = DATA_DIR / "goodcup.db"
 #: Bundled 2016 WCR/SCA Coffee Taster's Flavor Wheel lexicon.
 FLAVOR_WHEEL_PATH: Path = REFERENCE_DIR / "flavor_wheel.json"
 
+#: Contact email sent (as a polite ``mailto``) to the Crossref API when pulling
+#: published literature. Crossref asks callers to identify themselves; this is
+#: the only place it is set. Change it to a real address in production.
+CONTACT_EMAIL: str = "roasting@goodcup.local"
+
 
 # --------------------------------------------------------------------------- #
 # Phase 2 data-volume gate (PRD section 7) -- HARD gate, conservative on purpose

@@ -1,0 +1,117 @@
+{
+  "version": "2016 WCR/SCA Coffee Taster's Flavor Wheel",
+  "note": "Hierarchical L1>L2>L3 reference plus a lexicon mapping raw tasting terms onto the wheel. L3 may be null when a term resolves only to an L2 group. Terms not present in the lexicon are stored as unmapped by analysis/descriptors.py.",
+  "wheel": {
+    "Floral": {
+      "Black Tea": [],
+      "Floral": ["Chamomile", "Rose", "Jasmine"]
+    },
+    "Fruity": {
+      "Berry": ["Blackberry", "Raspberry", "Blueberry", "Strawberry"],
+      "Dried Fruit": ["Raisin", "Prune"],
+      "Other Fruit": ["Coconut", "Cherry", "Pomegranate", "Pineapple", "Grape", "Apple", "Peach", "Pear"],
+      "Citrus Fruit": ["Grapefruit", "Orange", "Lemon", "Lime"]
+    },
+    "Sour/Fermented": {
+      "Sour": ["Sour Aromatics", "Acetic Acid", "Citric Acid", "Malic Acid"],
+      "Alcohol/Fermented": ["Winey", "Whiskey", "Fermented", "Overripe"]
+    },
+    "Green/Vegetative": {
+      "Olive Oil": [],
+      "Raw": [],
+      "Green/Vegetative": ["Under-ripe", "Peapod", "Fresh", "Dark Green", "Vegetative", "Hay-like", "Herb-like"],
+      "Beany": []
+    },
+    "Other": {
+      "Papery/Musty": ["Stale", "Cardboard", "Papery", "Woody", "Moldy/Damp", "Musty/Dusty", "Musty/Earthy", "Animalic", "Meaty/Brothy", "Phenolic"],
+      "Chemical": ["Bitter", "Salty", "Medicinal", "Petroleum", "Skunky", "Rubber"]
+    },
+    "Roasted": {
+      "Pipe Tobacco": [],
+      "Tobacco": [],
+      "Burnt": ["Acrid", "Ashy", "Smoky", "Brown, Roast"],
+      "Cereal": ["Grain", "Malt"]
+    },
+    "Spices": {
+      "Pungent": [],
+      "Pepper": [],
+      "Brown Spice": ["Anise", "Nutmeg", "Cinnamon", "Clove"]
+    },
+    "Nutty/Cocoa": {
+      "Nutty": ["Peanuts", "Hazelnut", "Almond"],
+      "Cocoa": ["Chocolate", "Dark Chocolate"]
+    },
+    "Sweet": {
+      "Brown Sugar": ["Molasses", "Maple Syrup", "Caramelized", "Honey"],
+      "Vanilla": [],
+      "Vanillin": [],
+      "Overall Sweet": [],
+      "Sweet Aromatics": []
+    }
+  },
+  "lexicon": {
+    "jasmine": ["Floral", "Floral", "Jasmine"],
+    "rose": ["Floral", "Floral", "Rose"],
+    "chamomile": ["Floral", "Floral", "Chamomile"],
+    "floral": ["Floral", "Floral", null],
+    "black tea": ["Floral", "Black Tea", null],
+    "bergamot": ["Fruity", "Citrus Fruit", null],
+    "lemon": ["Fruity", "Citrus Fruit", "Lemon"],
+    "lime": ["Fruity", "Citrus Fruit", "Lime"],
+    "orange": ["Fruity", "Citrus Fruit", "Orange"],
+    "grapefruit": ["Fruity", "Citrus Fruit", "Grapefruit"],
+    "citrus": ["Fruity", "Citrus Fruit", null],
+    "blueberry": ["Fruity", "Berry", "Blueberry"],
+    "strawberry": ["Fruity", "Berry", "Strawberry"],
+    "blackberry": ["Fruity", "Berry", "Blackberry"],
+    "raspberry": ["Fruity", "Berry", "Raspberry"],
+    "blackcurrant": ["Fruity", "Berry", null],
+    "berry": ["Fruity", "Berry", null],
+    "red apple": ["Fruity", "Other Fruit", "Apple"],
+    "apple": ["Fruity", "Other Fruit", "Apple"],
+    "cherry": ["Fruity", "Other Fruit", "Cherry"],
+    "peach": ["Fruity", "Other Fruit", "Peach"],
+    "pear": ["Fruity", "Other Fruit", "Pear"],
+    "red grape": ["Fruity", "Other Fruit", "Grape"],
+    "grape": ["Fruity", "Other Fruit", "Grape"],
+    "pineapple": ["Fruity", "Other Fruit", "Pineapple"],
+    "tropical": ["Fruity", "Other Fruit", null],
+    "raisin": ["Fruity", "Dried Fruit", "Raisin"],
+    "prune": ["Fruity", "Dried Fruit", "Prune"],
+    "juicy": ["Fruity", "Other Fruit", null],
+    "winey": ["Sour/Fermented", "Alcohol/Fermented", "Winey"],
+    "fermented": ["Sour/Fermented", "Alcohol/Fermented", "Fermented"],
+    "funky": ["Sour/Fermented", "Alcohol/Fermented", "Overripe"],
+    "tomato": ["Green/Vegetative", "Green/Vegetative", "Vegetative"],
+    "herbal": ["Green/Vegetative", "Green/Vegetative", "Herb-like"],
+    "hay": ["Green/Vegetative", "Green/Vegetative", "Hay-like"],
+    "vegetative": ["Green/Vegetative", "Green/Vegetative", "Vegetative"],
+    "cocoa": ["Nutty/Cocoa", "Cocoa", "Chocolate"],
+    "chocolate": ["Nutty/Cocoa", "Cocoa", "Chocolate"],
+    "milk chocolate": ["Nutty/Cocoa", "Cocoa", "Chocolate"],
+    "dark chocolate": ["Nutty/Cocoa", "Cocoa", "Dark Chocolate"],
+    "almond": ["Nutty/Cocoa", "Nutty", "Almond"],
+    "hazelnut": ["Nutty/Cocoa", "Nutty", "Hazelnut"],
+    "peanut": ["Nutty/Cocoa", "Nutty", "Peanuts"],
+    "nutty": ["Nutty/Cocoa", "Nutty", null],
+    "honey": ["Sweet", "Brown Sugar", "Honey"],
+    "caramel": ["Sweet", "Brown Sugar", "Caramelized"],
+    "molasses": ["Sweet", "Brown Sugar", "Molasses"],
+    "panela": ["Sweet", "Brown Sugar", "Molasses"],
+    "brown sugar": ["Sweet", "Brown Sugar", null],
+    "cane sugar": ["Sweet", "Brown Sugar", null],
+    "maple syrup": ["Sweet", "Brown Sugar", "Maple Syrup"],
+    "vanilla": ["Sweet", "Vanilla", null],
+    "sweet": ["Sweet", "Overall Sweet", null],
+    "clove": ["Spices", "Brown Spice", "Clove"],
+    "cinnamon": ["Spices", "Brown Spice", "Cinnamon"],
+    "nutmeg": ["Spices", "Brown Spice", "Nutmeg"],
+    "anise": ["Spices", "Brown Spice", "Anise"],
+    "cedar": ["Other", "Papery/Musty", "Woody"],
+    "woody": ["Other", "Papery/Musty", "Woody"],
+    "malt": ["Roasted", "Cereal", "Malt"],
+    "grain": ["Roasted", "Cereal", "Grain"],
+    "smoky": ["Roasted", "Burnt", "Smoky"],
+    "tobacco": ["Roasted", "Tobacco", null]
+  }
+}

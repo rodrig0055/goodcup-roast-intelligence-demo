@@ -225,3 +225,50 @@ BEGIN
     SELECT RAISE(ABORT,
         'cuppings raw observation columns are immutable; correct by re-ingesting the source');
 END;
+
+-- --------------------------------------------------------------------------- --
+-- experiments: durable R&D decision records (Experiment Lab). App-authored
+-- institutional memory, NOT ingested raw data -- freely updatable, no trigger.
+-- --------------------------------------------------------------------------- --
+CREATE TABLE IF NOT EXISTS experiments (
+    experiment_id  INTEGER PRIMARY KEY,
+    created_at     TEXT,                  -- ISO-8601
+    title          TEXT NOT NULL,
+    green_id       INTEGER REFERENCES greens(green_id) ON DELETE SET NULL,
+    hypothesis     TEXT,
+    variable       TEXT,                  -- what was deliberately changed
+    success_rule   TEXT,
+    status         TEXT,                  -- draft / ready / decided
+    blind_results  TEXT,                  -- JSON: ranking, means, spreads
+    decision       TEXT,
+    owner          TEXT,
+    source_hash    TEXT UNIQUE            -- dedupe key
+);
+CREATE INDEX IF NOT EXISTS idx_experiments_green ON experiments(green_id);
+
+-- --------------------------------------------------------------------------- --
+-- paper_references: scholarly papers pulled on demand from free APIs
+-- (Crossref / Semantic Scholar / arXiv) and cached so they are available
+-- offline and citable in decision records. App-authored cache; updatable.
+-- --------------------------------------------------------------------------- --
+CREATE TABLE IF NOT EXISTS paper_references (
+    reference_id   INTEGER PRIMARY KEY,
+    doi            TEXT,
+    title          TEXT NOT NULL,
+    authors        TEXT,
+    year           INTEGER,
+    venue          TEXT,
+    abstract       TEXT,
+    url            TEXT,
+    source_api     TEXT,                  -- crossref / semantic_scholar / arxiv
+    query          TEXT,                  -- the search that surfaced it
+    retrieved_at   TEXT,                  -- ISO-8601
+    source_hash    TEXT UNIQUE            -- dedupe key (doi or normalised title)
+);
+
+-- Join: which cached papers support which experiments/hypotheses.
+CREATE TABLE IF NOT EXISTS experiment_references (
+    experiment_id  INTEGER NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
+    reference_id   INTEGER NOT NULL REFERENCES paper_references(reference_id) ON DELETE CASCADE,
+    PRIMARY KEY (experiment_id, reference_id)
+);
