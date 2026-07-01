@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "goodcup"
+version = "0.1.0"
+description = "GoodCup Roast-to-Cup Intelligence -- local-first roast/cupping analysis (prototype)"
+requires-python = ">=3.11"
+# Keep in sync with requirements.txt (that file is the human-readable list;
+# this block is what `pip install -e .` uses).
+dependencies = [
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "scikit-learn>=1.3",
+    "plotly>=5.18",
+    "streamlit>=1.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+goodcup = "goodcup.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+goodcup = ["db/schema.sql", "reference/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "src"]

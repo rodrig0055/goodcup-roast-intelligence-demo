@@ -1,0 +1,1 @@
+"""GoodCup ingest subpackage."""

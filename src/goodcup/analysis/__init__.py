@@ -1,0 +1,1 @@
+"""GoodCup analysis subpackage."""

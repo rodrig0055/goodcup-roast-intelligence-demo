@@ -1,0 +1,1 @@
+"""GoodCup dashboard subpackage."""

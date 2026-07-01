@@ -1,0 +1,7 @@
+roast_ref,cupper_name,cupping_date,session_id,form_type,fragrance_aroma,flavor,aftertaste,acidity,body,balance,uniformity,clean_cup,sweetness,overall,defect_points,total_score,descriptors_raw,notes
+R-2026-001,Ana,2026-02-10,SES-2026-02,sca_traditional,7.75,8.0,7.5,8.0,7.5,7.75,10,10,10,7.75,0,86.0,"jasmine, bergamot, lemon, black tea, honey",
+R-2026-001,Ben,2026-02-10,SES-2026-02,sca_traditional,7.75,8.0,7.5,8.0,7.5,7.75,10,10,10,7.0,0,85.25,"jasmine, bergamot, lemon, black tea, honey",
+R-2026-002,Ana,2026-02-10,SES-2026-02,sca_traditional,7.75,8.0,7.5,8.0,7.5,7.75,10,10,10,7.75,0,84.5,"blueberry, strawberry, cocoa, winey",
+R-2026-002,Ben,2026-02-10,SES-2026-02,sca_traditional,7.75,8.0,7.5,8.0,7.5,7.75,10,10,10,7.0,0,83.75,"blueberry, strawberry, cocoa, winey",
+R-2026-003,Ana,2026-02-10,SES-2026-02,sca_traditional,7.75,8.0,7.5,8.0,7.5,7.75,10,10,10,7.75,0,85.25,"red apple, caramel, orange, floral",
+R-2026-003,Ben,2026-02-10,SES-2026-02,sca_traditional,7.75,8.0,7.5,8.0,7.5,7.75,10,10,10,7.0,0,84.5,"red apple, caramel, orange, floral",

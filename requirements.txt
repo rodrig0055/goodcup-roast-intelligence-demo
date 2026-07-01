@@ -1,0 +1,14 @@
+# GoodCup Roast-to-Cup Intelligence -- runtime dependencies.
+# Kept deliberately short: every dependency is a maintenance liability for a
+# small team (PRD guiding constraint 4). Storage is stdlib sqlite3 (no server,
+# no ORM). Justification is noted next to each line.
+
+pandas>=2.1        # tabular wrangling of curves / cuppings / association tables
+numpy>=1.26        # array math for roast metrics (RoR, phase slicing)
+scipy>=1.11        # bootstrap CIs, correlation stats, Benjamini-Hochberg FDR
+scikit-learn>=1.3  # Phase 2 only: StandardScaler + NearestNeighbors (interpretable)
+plotly>=5.18       # interactive roast curves + correlation/calibration charts
+streamlit>=1.30    # local single-user dashboard (one-command launch)
+
+# Dev / test only:
+pytest>=7.4        # test runner; `pytest` must be green before advancing phases

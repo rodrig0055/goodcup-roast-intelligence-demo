@@ -1,0 +1,2 @@
+roast_ref,lot_name,machine_id,roaster_name,roast_date,batch_size_g,ambient_temp_c,ambient_humidity_pct,temp_unit,charge_temp,dry_end_time_s,dry_end_temp,fc_start_time_s,fc_start_temp,fc_end_time_s,drop_time_s,drop_temp,source_software,notes
+R-2026-014,Kochere Washed,Probat-P12,Sam,2026-02-14,1200,27,65,C,200,300,150,480,196,540,590,210,manual,Paper-logged batch (no curve)
