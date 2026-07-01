@@ -36,6 +36,22 @@ CONTACT_EMAIL: str = "roasting@goodcup.local"
 
 
 # --------------------------------------------------------------------------- #
+# AI layer (grounded narration over the analysis layer)
+# --------------------------------------------------------------------------- #
+#: Which AI provider narrates grounded facts. "mock" is a deterministic, fully
+#: offline stand-in (the default -- no API key, no network, no dependency). "claude"
+#: selects the real Anthropic-backed provider, which requires the `anthropic` SDK
+#: and credentials; it degrades gracefully to an "unavailable" message if missing.
+#: The AI layer only narrates numbers computed by the analysis layer -- it never
+#: computes a statistic or bypasses the Phase 2 gate, regardless of provider.
+AI_PROVIDER: str = "mock"
+
+#: Model id used by the "claude" provider only (ignored by "mock"). Configurable
+#: so a deployment can swap it without code changes.
+AI_MODEL: str = "claude-opus-4-8"
+
+
+# --------------------------------------------------------------------------- #
 # Phase 2 data-volume gate (PRD section 7) -- HARD gate, conservative on purpose
 # --------------------------------------------------------------------------- #
 #: Minimum roasts with a matched cupping score before the recommender may run at

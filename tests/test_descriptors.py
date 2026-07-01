@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from goodcup.analysis import descriptors as D
+from goodcup.ai.mock import MockProvider
 
 from conftest import make_cupping, make_green, make_roast
 
@@ -34,6 +35,28 @@ def test_rebuild_descriptors_populates_and_is_idempotent(conn):
     assert mapping["jasmine"] == "Floral"
     assert mapping["lemon"] == "Fruity"
     assert mapping["mystery-note"] is None            # unmapped kept, not dropped
+
+
+def test_ai_provider_maps_unknown_terms_and_flags_them(conn):
+    g = make_green(conn)
+    r = make_roast(conn, g)
+    # "meyer lemon" is not in the lexicon; "lemon" is -> AI should map via token match
+    make_cupping(conn, r, session_id="S1", descriptors_raw="meyer lemon, jasmine")
+
+    # without a provider: lexicon maps jasmine, leaves meyer lemon unmapped
+    D.rebuild_descriptors(conn)
+    src = {row["raw_term"]: row["map_source"]
+           for row in conn.execute("SELECT raw_term, map_source FROM descriptors")}
+    assert src["jasmine"] == "lexicon"
+    assert src["meyer lemon"] is None
+
+    # with the mock provider: meyer lemon gets an AI-mapped row, flagged as 'ai'
+    D.rebuild_descriptors(conn, provider=MockProvider())
+    rows = {row["raw_term"]: (row["map_source"], row["wheel_category_l3"])
+            for row in conn.execute("SELECT raw_term, map_source, wheel_category_l3 FROM descriptors")}
+    assert rows["jasmine"][0] == "lexicon"        # lexicon still wins for known terms
+    assert rows["meyer lemon"][0] == "ai"         # distinguishable from lexicon
+    assert rows["meyer lemon"][1] == "Lemon"      # sensible guess
 
 
 def test_descriptor_score_association_reports_guardrail_columns(conn):

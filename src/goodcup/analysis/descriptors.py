@@ -53,8 +53,15 @@ def map_term(term: str) -> tuple[str | None, str | None, str | None]:
     return (l1, l2, l3)
 
 
-def rebuild_descriptors(conn) -> int:
+def rebuild_descriptors(conn, provider=None) -> int:
     """Rebuild the ``descriptors`` table from every cupping's raw notes.
+
+    Terms are first mapped by the deterministic bundled lexicon (``map_source =
+    'lexicon'``). When a ``provider`` is given, terms the lexicon can't place are
+    passed to ``provider.map_descriptor(term, lexicon)`` for a best-effort guess
+    (``map_source = 'ai'``); the guess is cached so it isn't recomputed per row.
+    Unmapped terms are kept with ``map_source = NULL`` — nothing is silently
+    dropped, and AI guesses are always distinguishable from lexicon mappings.
 
     Returns the number of descriptor rows written. Idempotent: clears first.
     """
@@ -62,14 +69,23 @@ def rebuild_descriptors(conn) -> int:
     rows = conn.execute(
         "SELECT cupping_id, descriptors_raw FROM cuppings WHERE descriptors_raw IS NOT NULL AND descriptors_raw != ''"
     ).fetchall()
+    lexicon = load_lexicon()
+    ai_cache: dict[str, tuple] = {}
     payload = []
     for cupping_id, raw in rows:
         for term in split_terms(raw):
             l1, l2, l3 = map_term(term)
-            payload.append((cupping_id, term, l1, l2, l3))
+            source = "lexicon" if l1 is not None else None
+            if l1 is None and provider is not None:
+                if term not in ai_cache:
+                    ai_cache[term] = provider.map_descriptor(term, lexicon)
+                gl1, gl2, gl3 = ai_cache[term]
+                if gl1 is not None:
+                    l1, l2, l3, source = gl1, gl2, gl3, "ai"
+            payload.append((cupping_id, term, l1, l2, l3, source))
     conn.executemany(
-        "INSERT INTO descriptors (cupping_id, raw_term, wheel_category_l1, wheel_category_l2, wheel_category_l3) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO descriptors (cupping_id, raw_term, wheel_category_l1, wheel_category_l2, wheel_category_l3, map_source) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         payload,
     )
     conn.commit()

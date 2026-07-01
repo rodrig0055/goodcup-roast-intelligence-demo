@@ -59,7 +59,7 @@ ARCHETYPES = [
     ("Ethiopia", "Guji", "natural", "Heirloom", 705, 11.0, 0.58, 2050, 14, -0.1,
      ["blueberry", "strawberry", "cocoa", "winey", "tropical"]),
     ("Colombia", "Huila", "washed", "Pink Bourbon", 735, 10.6, 0.55, 1750, 16, 0.2,
-     ["red apple", "caramel", "orange", "floral", "panela"]),
+     ["red apple", "caramel", "orange", "floral", "panela", "meyer lemon"]),
     ("Kenya", "Nyeri", "washed", "SL28", 745, 10.1, 0.52, 1800, 17, 0.25,
      ["blackcurrant", "grapefruit", "tomato", "cane sugar", "juicy"]),
     ("Guatemala", "Huehuetenango", "honey", "Caturra", 725, 10.8, 0.56, 1650, 15, 0.0,
