@@ -39,16 +39,21 @@ CONTACT_EMAIL: str = "roasting@goodcup.local"
 # AI layer (grounded narration over the analysis layer)
 # --------------------------------------------------------------------------- #
 #: Which AI provider narrates grounded facts. "mock" is a deterministic, fully
-#: offline stand-in (the default -- no API key, no network, no dependency). "claude"
-#: selects the real Anthropic-backed provider, which requires the `anthropic` SDK
-#: and credentials; it degrades gracefully to an "unavailable" message if missing.
+#: offline stand-in (the default -- no API key, no network, no dependency).
+#: "gemini" selects the real Google Gemini provider, which reads its key from the
+#: GEMINI_API_KEY environment variable (or a Streamlit secret) and degrades
+#: gracefully to a clear "unavailable" message when the key/network is missing.
 #: The AI layer only narrates numbers computed by the analysis layer -- it never
 #: computes a statistic or bypasses the Phase 2 gate, regardless of provider.
+#:
+#: Default is "mock" on purpose: the hosted demo is public and ephemeral, so a
+#: real key placed there would be spent by anonymous viewers. Set AI_PROVIDER
+#: ="gemini" (plus GEMINI_API_KEY) locally, or in Streamlit secrets, to enable it.
 AI_PROVIDER: str = "mock"
 
-#: Model id used by the "claude" provider only (ignored by "mock"). Configurable
-#: so a deployment can swap it without code changes.
-AI_MODEL: str = "claude-opus-4-8"
+#: Gemini model id used by the "gemini" provider only (ignored by "mock").
+#: Configurable so a deployment can swap it without code changes.
+GEMINI_MODEL: str = "gemini-2.5-flash-lite"
 
 
 # --------------------------------------------------------------------------- #

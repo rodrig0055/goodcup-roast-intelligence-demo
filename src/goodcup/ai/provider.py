@@ -51,10 +51,10 @@ class AIProvider(ABC):
 
 def get_provider() -> AIProvider:
     """Return the configured provider. Defaults to the offline mock."""
-    if AI_PROVIDER == "claude":
-        from goodcup.ai.claude import ClaudeProvider
+    if AI_PROVIDER == "gemini":
+        from goodcup.ai.gemini import GeminiProvider
 
-        return ClaudeProvider()
+        return GeminiProvider()
     from goodcup.ai.mock import MockProvider
 
     return MockProvider()

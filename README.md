@@ -38,6 +38,22 @@ deterministic synthetic workspace. Notes for the hosted demo:
 If a deploy shows a stale error after a push, use **Manage app → Reboot** to pull
 the latest commit.
 
+### Optional: enable the real Gemini AI provider
+
+The AI layer defaults to an offline mock. To use Google Gemini instead, set
+`AI_PROVIDER = "gemini"` in `config.py` (model id is `GEMINI_MODEL`, default
+`gemini-2.5-flash-lite`) and provide a key — **never hardcode it**:
+
+```bash
+export GEMINI_API_KEY=your-key      # local
+```
+
+On Streamlit Cloud, add `GEMINI_API_KEY` under **Manage app → Settings → Secrets**.
+Gemini narrates the same computed facts as the mock (it never invents numbers), and
+falls back to a clear message if the key or network is missing. Note: the hosted
+demo is public, so a key placed in its secrets is spent by anonymous viewers — keep
+Gemini for local use unless you intend that.
+
 ## Verify
 
 ```bash
